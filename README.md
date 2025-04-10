@@ -46,8 +46,7 @@ python Final_Test.py
 | A5      | Right Leg      | O           |
 
 ## Contact
-For questions, please contact:  
-**Guangxuan Xu**  
+For questions, please contact: **Guangxuan Xu**  
 Email: [eggsyxu@umich.edu]
 
 

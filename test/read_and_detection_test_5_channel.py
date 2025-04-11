@@ -17,18 +17,19 @@ class SerialSignalViewer(QMainWindow):
         self.num_points = int(sampling_rate * duration)
         self.time_base = np.linspace(0, duration, self.num_points)
 
-        self.num_channels = 6
+        # Only 5 channels now
+        self.num_channels = 5
         self.channel_labels = [
             "A0 - Left Wrist", "A1 - Right Wrist", "A2 - Left Elbow",
-            "A3 - Right Elbow", "A4 - Left Leg", "A5 - Right Leg"
+            "A3 - Right Elbow", "A4 - Left Leg"
         ]
         self.data = [np.zeros(self.num_points) for _ in range(self.num_channels)]
 
-        self.thresholds = [85, 180, 100, 180, 400, 180]
+        self.thresholds = [85, 180, 100, 180, 400]
         self.cooldown_time = 0.8
-        self.priority_window = 1.0  # ±1s elbow suppression
+        self.priority_window = 1.0
         self.last_spike_time = [0] * self.num_channels
-        self.spike_history = [[] for _ in range(self.num_channels)]  # keep timestamps
+        self.spike_history = [[] for _ in range(self.num_channels)]
 
         self.b_notch, self.a_notch = iirnotch(60.0, 10.0, fs=sampling_rate)
 
@@ -55,7 +56,7 @@ class SerialSignalViewer(QMainWindow):
         for i in range(self.num_channels):
             pw = pg.PlotWidget()
             pw.setTitle(self.channel_labels[i])
-            pw.setYRange(0, 80)
+            pw.setYRange(0, 50)
             pw.setXRange(0, self.duration)
             pw.setMinimumHeight(250)
             curve = pw.plot(pen='g')
@@ -64,7 +65,6 @@ class SerialSignalViewer(QMainWindow):
             layout.addWidget(pw, row, col)
 
     def has_spike_nearby(self, history, now, window):
-        """Check if any spike in history is within ±window seconds of now."""
         return any(abs(now - t) <= window for t in history)
 
     def update_plot(self):
@@ -82,28 +82,23 @@ class SerialSignalViewer(QMainWindow):
         now = time.time()
 
         for i in range(self.num_channels):
-            # Filter and update plot
             self.data[i] = np.roll(self.data[i], -1)
             filtered = lfilter(self.b_notch, self.a_notch, [self.data[i][-2], values[i]])
             self.data[i][-1] = filtered[-1]
             self.plots[i].setData(self.time_base, self.data[i])
 
-            # Burst detection
             if filtered[-1] > self.thresholds[i]:
                 dt = now - self.last_spike_time[i]
                 if dt > self.cooldown_time:
 
-                    # Check suppression
                     if i == 0 and self.has_spike_nearby(self.spike_history[2], now, self.priority_window):
-                        continue  # A2 dominates A0
+                        continue
                     if i == 1 and self.has_spike_nearby(self.spike_history[3], now, self.priority_window):
-                        continue  # A3 dominates A1
+                        continue
 
                     print(f"⚡ Burst detected on channel A{i} ({self.channel_labels[i]})")
                     self.last_spike_time[i] = now
                     self.spike_history[i].append(now)
-
-                    # Clean up old history
                     self.spike_history[i] = [t for t in self.spike_history[i] if now - t <= 2.0]
 
     def closeEvent(self, event):

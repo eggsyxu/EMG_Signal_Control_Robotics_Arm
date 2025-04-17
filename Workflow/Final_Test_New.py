@@ -8,7 +8,7 @@ from pyqtgraph.Qt import QtCore
 from scipy.signal import iirnotch, lfilter
 
 class SerialSignalViewer(QMainWindow):
-    def __init__(self, port='/dev/cu.usbmodem21201', baudrate=115200,
+    def __init__(self, port='/dev/cu.usbserial-2120', baudrate=115200,
                  sampling_rate=1000, duration=3):
         super().__init__()
 
@@ -17,19 +17,19 @@ class SerialSignalViewer(QMainWindow):
         self.num_points = int(sampling_rate * duration)
         self.time_base = np.linspace(0, duration, self.num_points)
 
-        # Only 5 channels now
         self.num_channels = 5
         self.channel_labels = [
             "A0 - Left Wrist", "A1 - Right Wrist", "A2 - Left Elbow", "A4 - Left Leg",
-            "A3 - Right Elbow"
+            "A5 - Right Elbow"
         ]
         self.data = [np.zeros(self.num_points) for _ in range(self.num_channels)]
 
-        self.thresholds = [50, 80, 80, 50, 50]
+        self.thresholds = [12, 40, 18, 13, 22]
         self.cooldown_time = 0.8
-        self.priority_window = 0.8
+        self.priority_window = 1.0
         self.last_spike_time = [0] * self.num_channels
         self.spike_history = [[] for _ in range(self.num_channels)]
+        self.elbow_spike_this_round = set()
 
         self.b_notch, self.a_notch = iirnotch(60.0, 10.0, fs=sampling_rate)
 
@@ -56,7 +56,7 @@ class SerialSignalViewer(QMainWindow):
         for i in range(self.num_channels):
             pw = pg.PlotWidget()
             pw.setTitle(self.channel_labels[i])
-            pw.setYRange(0, 100)
+            pw.setYRange(0, 50)
             pw.setXRange(0, self.duration)
             pw.setMinimumHeight(250)
             curve = pw.plot(pen='g')
@@ -80,6 +80,8 @@ class SerialSignalViewer(QMainWindow):
             return
 
         now = time.time()
+        self.elbow_spike_this_round.clear()
+        spike_triggered = [False] * self.num_channels
 
         for i in range(self.num_channels):
             self.data[i] = np.roll(self.data[i], -1)
@@ -90,16 +92,35 @@ class SerialSignalViewer(QMainWindow):
             if filtered[-1] > self.thresholds[i]:
                 dt = now - self.last_spike_time[i]
                 if dt > self.cooldown_time:
+                    spike_triggered[i] = True
+                    if i == 2 or i == 4:
+                        self.elbow_spike_this_round.add(i)
 
-                    if i == 0 and self.has_spike_nearby(self.spike_history[2], now, self.priority_window):
-                        continue
-                    if i == 1 and self.has_spike_nearby(self.spike_history[4], now, self.priority_window):
-                        continue
+        for i in range(self.num_channels):
+            if not spike_triggered[i]:
+                continue
 
-                    print(f"⚡ Burst detected on channel A{i} ({self.channel_labels[i]})")
-                    self.last_spike_time[i] = now
-                    self.spike_history[i].append(now)
-                    self.spike_history[i] = [t for t in self.spike_history[i] if now - t <= 2.0]
+            if i == 0 and (2 in self.elbow_spike_this_round or self.has_spike_nearby(self.spike_history[2], now, self.priority_window)):
+                continue
+            if i == 1 and (4 in self.elbow_spike_this_round or self.has_spike_nearby(self.spike_history[4], now, self.priority_window)):
+                continue
+
+            print(f"⚡ Burst detected on channel A{i} ({self.channel_labels[i]})")
+            self.last_spike_time[i] = now
+            self.spike_history[i].append(now)
+            self.spike_history[i] = [t for t in self.spike_history[i] if now - t <= 2.0]
+
+            commands = {
+                0: 'L',
+                1: 'R',
+                2: 'F',
+                4: 'B',
+                3: 'G',
+            }
+            if i in commands:
+                command = commands[i].encode()
+                self.ser.write(command)
+                print(f"📤 Sent command: {command.decode()}")
 
     def closeEvent(self, event):
         self.ser.close()
@@ -109,12 +130,12 @@ class SerialSignalViewer(QMainWindow):
 if __name__ == '__main__':
     app = QApplication(sys.argv)
     viewer = SerialSignalViewer(
-        port='/dev/cu.usbmodem21201',
+        port='/dev/cu.usbserial-2120',
         baudrate=115200,
         sampling_rate=1000,
         duration=3
     )
-    viewer.setWindowTitle("EMG Viewer with ±1s Elbow Priority")
+    viewer.setWindowTitle("EMG Viewer with Serial Output and Elbow Priority")
     viewer.resize(1800, 700)
     viewer.show()
     sys.exit(app.exec_())
